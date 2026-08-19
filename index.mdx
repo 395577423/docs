@@ -1,20 +1,1280 @@
+﻿---
+title: 象盒支付分账接口文档
+description: 根据原始 Word 文档整理的象盒支付分账接口说明，适用于 Mintlify。
 ---
-title: "Introduction"
-description: "Welcome to your project"
----
 
-Write a short description of your product here. What it does, who it's for, and what they can accomplish with it.
+# 象盒支付分账接口文档
 
-<Tip>
-  Ready to make this your own? Start by editing this page. Update your `docs.json` file to customize your site. Then fill out the [Quickstart](/quickstart) page.
-</Tip>
+> 来源：`象盒支付分账接口文档（20230831）.docx`
 
-<Card title="Quickstart" icon="rocket" href="/quickstart">
-  This card links to the quickstart page in your project.
-</Card>
-<Card title="Components" icon="puzzle-piece" href="https://mintlify.com/docs/components">
-  Add cards, callouts, steps, tabs, and more to design and structure your pages.
-</Card>
-<Card title="Settings" icon="gear" href="https://mintlify.com/docs/organize/settings">
-  Set your site name, branding, and navigation in the `docs.json` file.
-</Card>
+| 版本号 | 修订日期 | 修订说明 |
+| --- | --- | --- |
+| V0.0.1 | 20230901 | 文档初始化 |
+| V0.0.2 | 202309012 | 增加二维码收款相关接口 |
+| V0.0.3 | 20231030 | 增加分账、提现手续费信息返回 |
+| V0.0.4 | 20231115 | 增加银行卡修改验证接口 |
+| v0.0.5 | 20240131 | 增加分账撤销接口 |
+
+## 1 接口规则
+### 1.1 协议规定
+
+| 术语 | 描述 |
+| --- | --- |
+| 传输方式 | 为保证交易安全性，建议采用 HTTPS 传输 |
+| 提交方式 | 采用 POST 方法提交 |
+| 数据格式 | 提交和返回数据都为 json 格式 |
+| 字符编码 | 统一采用 UTF-8 字符编码 |
+| 签名算法 | HMAC-SHA1 |
+| 签名要求 | 请求和接收数据均需要校验签名，详细方法请参考签名算法 |
+| 判断逻辑 | 先判断协议字段返回，再判断业务返回，最后判断交易状态 |
+
+### 1.2 签名算法
+目前采用HMAC-SHA1签名算法，为了方便比较，签名结果统一转换为小写字符。
+签名串一共有七行，每一行为一个参数。行尾以 \n（换行符，ASCII编码值为0x0A）结束，包括最后一行。如果参数本身以\n结束，也需要附加一个\n。
+#### 签名字拼接符串  =  HTTP请求方法\n  + URL\n  +  Client-Id\n  +  Signature-Type\n + Timestamp\n+ Nonce-Str\n + 请求报文主体\n
+#### 签名拼接字符串参数说明：
+HTTP请求方法：HTTP请求的方法（GET,POST,PUT）等。
+#### URL：假设请求接口地址为“https://xhj-sit.91xft.cn/mch/pre/register“，则URL的值为“/mch/pre/register”。
+Client-Id：我们分配提供。
+Signature-Type：固定值，HMAC-SHA1。
+请求时间戳：当前时间的时间戳，13位数字。
+请求随机串：随机字符串。
+请求报文主体：请求报文体内容。
+Signature = HmacSHA1( 签名字拼接符串，秘钥EKY).toLowerCase。
+其中的秘钥EKY由我们分配提供。
+得到Signature值后同Client-Id、Nonce-Str、Timestamp放入请求头headers中。
+#### 注意：我们接口的响应签名算法中，去掉了HTTP请求方法和URL两个参数，即：
+响应签名字拼接符串  =    Client-Id\n  +  Signature-Type\n + Timestamp\n + Nonce-Str\n + 请求报文主体\n
+### 1.3 响应报文说明
+所有接口先判断HTTP状态码，状态码非200的，可以认为是失败，失败的请求，可以通过响应body里面的code和message查看具体失败原因。
+示例：
+
+```json
+{
+  "code": "20001",
+  "message": "签名验证失败"
+}
+```
+
+状态码为200的请求，表示请求成功，根据接口文档中各个接口响应参数说明做对应处理。
+### 1.4 报文体加密规则说明
+针对正常的请求和响应报文，做了国密算法SM4加密，双方约定好密钥。
+特别注意的一点是，响应只有状态码为200时，报文体才做加密，否则直接展示错误码code和错误描述message。
+加解密java代码样例(jdk要求>=1.8)：
+
+```java
+import org.junit.Assert;import org.junit.Test;import com.hrfh.crypto.HrCrypto;public class HrCryptoTest {    @Test    public void sm4() throws Exception {        final String plainText = "这是明文1";//        final String secretKey = "0123456789ABCDEF";// 密钥         HrCrypto crypto = HrCrypto.sm4(secretKey);// 获取加解密处理器        // 明文加密        String encodedString = crypto.encode(plainText);        System.out.println("加密后数据[" + encodedString + "]");        // 密文解密        String plainText2 = crypto.decode(encodedString);        System.out.println("解密后数据[" + plainText2 + "]");        // 比较前后结果        Assert.assertEquals("解密后与原文不一致", plainText, plainText2);        System.err.println("加解密测试完成");    }}
+```
+
+## 2 商户入驻接口（P0)
+### 2.1 图片上传接口
+#### 说明：在平台、门店入驻时需优先上传证件图片信息，图片大小限制在5M以内。
+#### 接口地址
+#### URL：/mch/image/upload
+#### Method：POST
+### 请求参数
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 图片名称 | name | string | 32 | 是 | 如：营业执照.jpg |
+| 图片内容 | content | string | 大小限制5M以内 | 是 | 图片Base64转码内容 |
+
+请求示例
+
+```
+{    "content": "999tlnXnzxxe/ce++9z/7qr/7qC3fccccrjz76qPgtkq4J/f8fd7DfabSxcQAAAABJRU5ErkJggg==",    "name": "wangliming.png"}
+```
+
+### 响应参数
+
+| 参数名 | 变量 | 类型 | 字段说明 |
+| --- | --- | --- | --- |
+| 文件ID | file_id | string | 上传图片返回的文件ID |
+
+错误描述
+响应示例
+
+```
+{    "file_id": "9d3cd3e908e64958b31981d7aebc760f.png"}
+```
+
+代码示例
+
+XftMybankClient client = new DefaultXftMybankClient(    "https://xhj-sit.91xft.cn/", "111111111111", "xvnYAUWB00jEdIrkdrt5CtQQNB1x4Jhl");XftMchImageUploadRequest request = new XftMchImageUploadRequest();request.setName("wangliming.png");request.setContent("");XftMchImageUploadResponse response = client.execute(request);
+
+### 2.2 预开户申请接口
+#### 说明：在平台、门店入驻上传图片资料后，调用预开户申请接口，提交商户开户资料信息
+#### 接口地址
+#### URL：/mch/pre/register
+#### Method：POST
+### 请求参数
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 外部交易号 | out_trade_no | string | 64 | 是 | 全局唯一 |
+| 备注 | remark | string | 200 | 否 |  |
+| 主体资料 | subject_info | object |  | 是 | 参考主体资料，subject_info参数说明 |
+| 联系人员（管理员）信息 | contact_info | object |  | 是 | 参考联系人员（管理员）信息参数说明 |
+| 结算银行账户 | bank_account_info | object |  | 否 | 参考结算银行账户参数说明 |
+
+主体资料，subject_info参数说明：
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 商户类型 | subject_type | string | 2 | 是 | 商户类型。可选值：01：自然人02: 个体工商户03: 企业商户 |
+| 营业执照信息 | business_license_info | object |  | 是 | 参考营业执照信息参数说明 |
+| 法人身份信息 | id_card_info | object |  | 是 | 参考法人身份信息参数说明 |
+
+营业执照信息，business_license_info参数说明：
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 营业执照照片 | license_copy | string | 200 | 是 | 图片上传接口返回的图片文件ID |
+| 注册号/统一社会信用代码 | license_number | string | 256 | 是 |  |
+| 商户名称 | merchant_name | string | 50 | 是 |  |
+| 所在省编码 | province | string | 32 | 否 |  |
+| 所在市编码 | city | string | 32 | 否 |  |
+| 所在区编码 | district | string | 32 | 否 |  |
+| 注册地址 | license_address | string | 256 | 否 |  |
+| 有效期限开始日期 | period_begin | string | 10 | 是 | 营业执照有效期开始时间格式要求：yyyy-mm-dd |
+| 有效期限结束日期 | period_end | string | 10 | 是 | 营业执照有效期结束时间。格式要求：yyyy-mm-dd测试环境：必须为2050-12-30 |
+
+法人身份信息，id_card_info参数说明：
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 身份证人像面照片 | id_card_copy | string | 200 | 否 | 图片上传接口返回的图片文件ID |
+| 身份证国徽面照片 | id_card_national | string | 200 | 否 | 图片上传接口返回的图片文件ID |
+| 法人手机号 | legal_person_phone | string | 20 | 否 | 开户发送的短信验证码的手机号。自然人和个体户必传，企业非必传 |
+| 身份证姓名 | id_card_name | string | 10 | 是 |  |
+| 身份证号码 | id_card_number | string | 18 | 是 |  |
+| 身份证居住地址 | id_card_address | string |  | 是 |  |
+| 身份证有效期开始时间 | card_period_begin | string | 10 | 否 | 身份证有效期开始时间格式要求：yyyy-mm-dd |
+| 身份证有效期结束时间 | card_period_end | string | 10 | 否 | 身份证有效期结束时间。格式要求：yyyy-mm-dd测试环境：必须为2099-12-11 |
+
+联系人员（管理员）信息，contact_info参数说明：
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 超级管理员姓名 | name | string | 10 | 是 |  |
+| 超级管理员身份证件号码 | id_number | string | 18 | 是 |  |
+| 超级管理员证件正面照片 | id_doc_copy | string | 200 | 否 | 传图片文件ID |
+| 超级管理员证件反面照片 | id_doc_copy_back | string | 200 | 否 | 传图片文件ID |
+| 身份证有效期开始时间 | card_period_begin | string | 10 | 否 | 身份证有效期开始时间格式要求：yyyy-mm-dd |
+| 身份证有效期结束时间 | card_period_end | string | 10 | 否 | 身份证有效期结束时间。格式要求：yyyy-mm-dd测试环境：必须为2099-12-11 |
+| 联系手机 | mobile_phone | string | 11 | 是 |  |
+| 联系邮箱 | email | string | 64 | 否 | 邮箱格式校验 |
+
+结算银行账户，bank_account_info参数说明：
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 账户类型 | bank_account_type | string | 60 | 是 | 若主体为企业/政府机关/事业单位/社会组织，可填写：对公银行账户。若主体为个体户，可选择填写：对公银行账户或经营者个人银行卡。BANK_ACCOUNT_TYPE_CORPORATE：对公银行账户BANK_ACCOUNT_TYPE_PERSONAL：经营者个人银行卡示例值：BANK_ACCOUNT_TYPE_CORPORATE |
+| 开户名称 | account_name | string | 256 | 是 | 银行账户户名。当商户类型是“01 自然人”、“02 个人工商户”时，开户人与须与负责人名称一致；当商户类型是“03 企业商户”时，须与企业法人名称一致。 |
+| 联行号 | contact_line | string | 64 | 是 |  |
+| 开户银行 | account_bank | string | 128 | 是 |  |
+| 银行账号 | account_number | string | 32 | 是 |  |
+
+请求示例
+
+```
+{    "bank_account_info": {        "account_bank": "农业银行",        "account_name": "稗瞬皆",        "account_number": "6668123578400277",        "bank_account_type": "BANK_ACCOUNT_TYPE_PERSONAL",        "contact_line": "103100000018"    },    "contact_info": {        "card_period_begin": "2021-01-01",        "card_period_end": "2031-01-01",        "email": "",        "id_doc_copy": "de1278424c3b4672b5aa3b3488eb56c3.png",        "id_doc_copy_back": "de1278424c3b4672b5aa3b3488eb56c3.png",        "id_number": "540103197411083405",        "mobile_phone": "16361858113",        "name": "稗瞬皆"    },    "out_trade_no": "2194bd2a8fdc42b5b6da9488fbaac5f3",    "subject_info": {        "business_license_info": {            "city": "0430000",            "district": "0430000",            "license_copy": "de1278424c3b4672b5aa3b3488eb56c3.png",            "license_number": "9200097411083105XX",            "merchant_name": "稗瞬皆的店",            "period_begin": "2021-01-01",            "period_end": "2031-01-01",            "province": "0430000"        },        "id_card_info": {            "card_period_begin": "2021-01-01",            "card_period_end": "2031-01-01",            "id_card_address": "",            "id_card_copy": "",            "id_card_name": "稗瞬皆",            "id_card_national": "",            "id_card_number": "540103197411083405",            "legal_person_phone": "16361858113"        },        "subject_type": "02"    }}
+```
+
+### 响应参数
+
+| 参数名 | 变量 | 类型 | 字段说明 |
+| --- | --- | --- | --- |
+| 申请单编号 | applyment_no | string | 商户申请入驻，返回的唯一编号 |
+
+响应示例
+
+```
+{    "applyment_no": "2023090111150800120000000000000000810060"}
+```
+
+代码示例
+
+XftMybankClient client = new DefaultXftMybankClient(    "https://xhj-sit.91xft.cn", "111111111111", "xvnYAUWB00jEdIrkdrt5CtQQNB1x4Jhl");XftMchPreRegisterRequest request = new XftMchPreRegisterRequest();request.setOutTradeNo(StringUtils.getRandomStr());XftMchPreRegisterSubjectInfo subjectInfo = new XftMchPreRegisterSubjectInfo();subjectInfo.setSubjectType("02");XftMchPreRegisterBusinessLicenseInfo businessLicenseInfo = new XftMchPreRegisterBusinessLicenseInfo();businessLicenseInfo.setMerchantName("稗瞬皆的店");businessLicenseInfo.setLicenseNumber("9200097411083105XX");businessLicenseInfo.setLicenseCopy("de1278424c3b4672b5aa3b3488eb56c3.png");businessLicenseInfo.setProvince("0430000");businessLicenseInfo.setCity("0430000");businessLicenseInfo.setDistrict("0430000");businessLicenseInfo.setPeriodBegin("2021-01-01");businessLicenseInfo.setPeriodEnd("2031-01-01");subjectInfo.setXftMchPreRegisterBusinessLicenseInfo(businessLicenseInfo);XftMchPreRegisterIdCardInfo idCardInfo = new XftMchPreRegisterIdCardInfo();idCardInfo.setIdCardNumber("540103197411083405");idCardInfo.setIdCardName("稗瞬皆");idCardInfo.setIdCardNational("");idCardInfo.setCardPeriodBegin("2021-01-01");idCardInfo.setCardPeriodEnd("2031-01-01");idCardInfo.setIdCardAddress("");idCardInfo.setIdCardCopy("");idCardInfo.setLegalPersonPhone("16361858113");subjectInfo.setXftMchPreRegisterIdCardInfo(idCardInfo);request.setXftMchPreRegisterSubjectInfo(subjectInfo);XftMchPreRegisterContactInfo contactInfo = new XftMchPreRegisterContactInfo();contactInfo.setName("稗瞬皆");contactInfo.setIdDocCopy("de1278424c3b4672b5aa3b3488eb56c3.png");contactInfo.setIdDocCopyBack("de1278424c3b4672b5aa3b3488eb56c3.png");contactInfo.setEmail("");contactInfo.setIdNumber("540103197411083405");contactInfo.setCardPeriodBegin("2021-01-01");contactInfo.setCardPeriodEnd("2031-01-01");contactInfo.setMobilePhone("16361858113");request.setXftMchPreRegisterContactInfo(contactInfo);XftMchPreRegisterBankAccountInfo bankAccountInfo = new XftMchPreRegisterBankAccountInfo();bankAccountInfo.setAccountName("稗瞬皆");bankAccountInfo.setAccountBank("农业银行");bankAccountInfo.setAccountNumber("6668123578400277");bankAccountInfo.setBankAccountType("BANK_ACCOUNT_TYPE_PERSONAL");bankAccountInfo.setContactLine("103100000018");request.setXftMchPreRegisterBankAccountInfo(bankAccountInfo);/** * 1、若主体为企业/政府机关/事业单位/社会组织，可填写：对公银行账户。 * 2、若主体为个体户，可选择填写：对公银行账户或经营者个人银行卡。 * BANK_ACCOUNT_TYPE_CORPORATE：对公银行账户 * BANK_ACCOUNT_TYPE_PERSONAL：经营者个人银行卡 */XftMchPreRegisterResponse response = client.execute(request);
+
+### 2.3 开户结果查询接口
+#### 说明：在平台、门店入驻上传图片资料后，调用预开户申请接口，如果开户状态未返回，可调用开户结果查询接口，获取商户预开户状态。
+#### 接口地址
+#### URL：/mch/pre/register/query
+#### Method：POST
+### 请求参数
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 申请单编号 | applyment_no | string | 64 | 是 | 预开户接口返回的申请单编号 |
+
+请求示例
+
+```
+{    "applyment_no": "2023090111150800120000000000000000810060"}
+```
+
+### 响应参数
+
+| 参数名 | 变量 | 类型 | 字段说明 |
+| --- | --- | --- | --- |
+| 失败原因描述 | failure_msg | String | 注册状态为失败时，返回失败原因 |
+| 商户号 | merchant_code | string | 商户入驻返回的开户商户号，商户唯一标识 |
+| 预注册状态 | status | string | 预入驻结果。可选值：0：审核中1：成功 2：失败当结果为审核中，请间隔时间回查。 |
+
+响应示例
+
+```
+{    "failure_msg": "",    "merchant_code": "226801000000868445122",    "status": "1"}
+```
+
+代码示例
+
+XfXftMybankClient client = new DefaultXftMybankClient(    "https://xhj-sit.91xft.cn/", "111111111111", "xvnYAUWB00jEdIrkdrt5CtQQNB1x4Jhl");XftMchPreRegisterQueryRequest request = new XftMchPreRegisterQueryRequest();request.setApplymentNo("2023090111150800120000000000000000810050");XftMchPreRegisterQueryResponse response = client.execute(request);
+
+### 2.4 获取激活链接（支付宝扫码认证）
+#### 说明：在平台、门店预开户申请-审核通过之后，可调用获取激活链接接口，进行商户激活认证。
+#### 接口地址
+#### URL：/mch/query/activation/url
+#### Method：POST
+### 请求参数
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 商户号 | merchant_code | string | 32 | 必传 | 预注册查询接口返回的商户号 |
+
+请求示例
+
+```
+{    "merchant_code": "226801000000868445122"}
+```
+
+### 响应参数
+
+| 参数名 | 变量 | 类型 | 字段说明 |
+| --- | --- | --- | --- |
+| 支付宝激活链接 | qr_code_url | string |  |
+
+响应示例
+
+```
+{    "qr_code_url": "alipays://platformapi/startapp?appId=202100502346704"}
+```
+
+代码示例
+
+XftMybankClient client = new DefaultXftMybankClient(    "https://xhj-sit.91xft.cn/", "111111111111", "xvnYAUWB00jEdIrkdrt5CtQQNB1x4Jhl");XftMchQueryActivationUrlRequest request = new XftMchQueryActivationUrlRequest();request.setMerchantCode("226801000000868445122");XftMchQueryActivationUrlResponse response = client.execute(request);
+
+### 2.5 激活结果通知接口
+#### 说明：提供激活结果通知地址，商户扫码激活后，会发送通知
+#### 调用方：星富通调用象盒
+### 请求参数
+
+| 参数名 | 变量 | 类型 | 长度 | 说明 |
+| --- | --- | --- | --- | --- |
+| 激活状态 | status | string | 2 | 0：注册中 1：成功 2：失败 |
+| 失败原因 | fail_reason | string | 200 | 激活失败是返回失败原因 |
+| 商户号 | merchant_code | string | 32 |  |
+
+### 2.6 激活结果查询接口
+#### 说明：在平台、门店提交激活后，需异步查询激活结果，仅商户激活成功后，才可正常使用。
+#### 接口地址
+#### URL：/mch/query/activation/state
+#### Method：POST
+### 请求参数
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 商户号 | merchant_code | string | 32 | 必传 |  |
+
+请求示例
+
+```
+{    "merchant_code": "226801000000868445122"}
+```
+
+### 响应参数
+
+| 参数名 | 变量 | 类型 | 字段说明 |
+| --- | --- | --- | --- |
+| 激活状态 | status | string | 0：注册中 1：成功 2：失败 |
+| 失败原因 | fail_reason | string | 激活失败是返回失败原因 |
+| 商户号 | merchant_code | string |  |
+
+响应示例
+
+```
+{    "merchant_code": "226801000000868445122",    "status": "1"}
+```
+
+代码示例
+
+XftMybankClient client = new DefaultXftMybankClient(    "https://xhj-sit.91xft.cn/", "111111111111", "xvnYAUWB00jEdIrkdrt5CtQQNB1x4Jhl");XftMchQueryActivationStateRequest request = new XftMchQueryActivationStateRequest();request.setMerchantCode("226801000000868445122");XftMchQueryActivationStateResponse response = client.execute(request);
+
+### 2.7 修改商户结算卡信息
+#### 说明：商户信息修改后会立即生效，当商户收单银行卡信息不正确影响正常的清算时能及时对商户的收单银行卡信息进行修改。
+此接口调用的前提是已经调用了 商户入驻结果查询接口获取了网商商户号。
+
+#### 接口地址
+#### URL：/mch/update
+#### Method：POST
+### 请求参数
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 外部交易号 | out_trade_no | string | 64 | 是 | 全局唯一 |
+| 商户号 | merchant_code | string | 32 | 是 | 修改的商户号 |
+| 主体资料 | subject_info | object |  | 是 | 参考主体资料，subject_info参数说明 |
+| 联系人员（管理员）信息 | contact_info | object |  | 否 | 参考联系人员（管理员）信息参数说明 |
+| 结算银行账户 | bank_account_info | object |  | 否 | 参考结算银行账户参数说明 |
+
+主体资料，subject_info参数说明：
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 营业执照信息 | business_license_info | object |  | 否 | 参考营业执照信息参数说明 |
+| 法人身份信息 | id_card_info | object |  | 是 | 参考法人身份信息参数说明 |
+
+营业执照信息，business_license_info参数说明：
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 营业执照照片 | license_copy | string | 200 | 否 | 图片上传接口返回的图片文件ID |
+| 所在省编码 | province | string | 32 | 否 |  |
+| 所在市编码 | city | string | 32 | 否 |  |
+| 所在区编码 | district | string | 32 | 否 |  |
+| 注册地址 | license_address | string | 256 | 否 |  |
+| 有效期限开始日期 | period_begin | string | 10 | 否 | 营业执照有效期开始时间格式要求：yyyy-mm-dd |
+| 有效期限结束日期 | period_end | string | 10 | 否 | 营业执照有效期结束时间。格式要求：yyyy-mm-dd |
+| 商户简称 | merchant_alias | string | 64 | 否 |  |
+
+法人身份信息，id_card_info参数说明：
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 身份证人像面照片 | id_card_copy | string | 200 | 是 | 图片上传接口返回的图片文件ID |
+| 身份证国徽面照片 | id_card_national | string | 200 | 是 | 图片上传接口返回的图片文件ID |
+| 法人手机号 | legal_person_phone | string | 20 | 否 | 开户发送的短信验证码的手机号。自然人和个体户必传，企业非必传 |
+| 身份证有效期开始时间 | card_period_begin | string | 10 | 否 | 身份证有效期开始时间格式要求：yyyy-mm-dd |
+| 身份证有效期结束时间 | card_period_end | string | 10 | 否 | 身份证有效期结束时间。格式要求：yyyy-mm-dd |
+
+联系人员（管理员）信息，contact_info参数说明：
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 超级管理员姓名 | name | string | 10 | 否 |  |
+| 联系手机 | mobile_phone | string | 11 | 否 |  |
+| 联系邮箱 | email | string | 64 | 否 | 邮箱格式校验 |
+
+结算银行账户，bank_account_info参数说明：
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 账户类型 | bank_account_type | string | 1 | 是 | 1、若主体为企业/政府机关/事业单位/社会组织，可填写：对公银行账户。2、若主体为个体户，可选择填写：对公银行账户或经营者个人银行卡。BANK_ACCOUNT_TYPE_CORPORATE：对公银行账户BANK_ACCOUNT_TYPE_PERSONAL：经营者个人银行卡示例值：BANK_ACCOUNT_TYPE_CORPORATE |
+| 开户名称 | account_name | string | 200 | 是 | 银行账户户名。当商户类型是“01 自然人”、“02 个人工商户”时，开户人与须与负责人名称一致；当商户类型是“03 企业商户”时，须与企业法人名称一致。 |
+| 联行号 | contact_line | string | 64 | 是 |  |
+| 开户银行 | account_bank | string | 128 | 是 |  |
+| 银行账号 | account_number | string | 32 | 是 |  |
+
+请求示例
+
+### 响应参数
+
+| 参数名 | 变量 | 类型 | 字段说明 |
+| --- | --- | --- | --- |
+| 失败原因描述 | failure_msg | String | 错误消息，仅状态错误是返回 |
+| 状态 | status | String | 本次业务处理的状态，默认以下3个状态： S：成功，F：失败，U：未知 |
+
+响应示例
+
+```
+{    "status": "S"}
+```
+
+代码示例
+
+## 3  二维码收款(p0)线下聚合收款码收款
+### 3.1 二维码下单接口
+#### 接口地址
+#### URL: /qrcode
+#### Method：POST
+### 请求参数
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 商户支付订单号 | out_trade_no | String | 64 | 是 | 象盒业务系统解冻时请求唯一流水号 |
+| 商户号 | merchant_code | String | 32 | 是 |  |
+| 商户名称 | merchant_name | String | 64 | 是 |  |
+| 新环境主订单编号 | xhj_trade_no | String | 32 | 是 |  |
+| 新环境订单合同编号 | contract_no | String | 32 | 是 |  |
+| 异步通知地址 | notify_url | String | 255 | 否 |  |
+| 新环境子订单编号 | sub_order_no | String | 32 | 是 |  |
+| 金额 | amount | String | 8 | 是 | 金额单位：分 |
+| 科目 | type | String | 10 | 是 |  |
+| 备注 | attach | String | 100 | 否 |  |
+| 订单失效时间 | expire_time | string | 6 | 否 | 订单失效时间，单位为秒，建 议大于60秒 |
+| 商品名称 | goods_name | string | 40 | 是 | 商品名称（中文最多支持20个 字符） |
+| 商品描述 | body | string | 128 | 否 |  |
+| 是否限定支付方式 | pay_limit | string | 10 | 否 | 微信支付宝支付方式限定，上 送”no_credit“表示不支持信用 卡支付；上送“no_balance”表 示仅支持银行卡支付；不上送 或上送空表示无限制 |
+
+请求示例
+
+```
+{"merchant_code":"226801000000865319122","out_trade_no":"ea51203e1a0146d7954b391118aecaf7","merchant_name":"xx","xhj_trade_no":"D713390072324","contract_no":"113389134260","sub_order_no":"D973390072363","amount":"100","type":"1,2,3","attach":"中介费,"}
+```
+
+### 响应参数
+
+| 参数名 | 变量 | 类型 | 字段说明 |
+| --- | --- | --- | --- |
+| 商户单号 | out_trade_no | string |  |
+| 二维码串 | code_url | String |  |
+| 预期手续费 | pre_fee | int | 单位分 |
+
+响应示例
+
+```
+{"out_trade_no":"ea51203e1a0146d7954b391118aecaf7","code_url":""}
+```
+
+代码示例
+
+### 3.2 二维码通知接口
+#### 接口地址
+#### Method：POST
+### 请求参数
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 商户订单号 | out_trade_no | String | 64 | 是 |  |
+| 商户号 | merchant_code | String | 32 | 是 |  |
+| 商户名称 | merchant_name | String | 64 | 是 |  |
+| 新环境订单编号 | xhj_trade_no | String | 32 | 是 |  |
+| 新环境订单合同编号 | contract_no | String | 32 | 是 |  |
+| 新环境子订单编号 | sub_order_no | String | 32 | 是 |  |
+| 金额 | amount | String | 11 | 是 | 金额单位：分 |
+| 科目 | type | String | 10 | 是 |  |
+| 备注 | attach | String | 100 | 是 |  |
+| 银行流水号 | third_trade_no | String | 50 | 是 |  |
+| 支付时间 | pay_time | String | 14 | 是 | yyyyMMddHHmmss |
+| 交易类型 | trade_type | String | 20 | 是 | xft.trade.pay-支付xft.trade.refund -退款 |
+| 支付类型 | pay_type | String | 2 | 是 | 支付方式  1-刷卡支付；2-工行快捷支付；3-网银支付；4-新型无卡；5-简单无卡；6-银联快捷支付；7-3D支付；8-ApplePay；9-微信；10-支付宝；11-非3D支付；12-银联扫码付；13-云闪付 |
+| 预期手续费 | pre_fee | int |  | 是 | 单位分 |
+
+请求示例
+
+```
+{"merchant_code":"226801000000865319122","out_trade_no":"ea51203e1a0146d7954b391118aecaf7","merchant_name":"xx","xhj_trade_no":"D713390072324","contract_no":"113389134260","sub_order_no":"D973390072363","amount":"100","type":"1,2,3","attach":"中介费,","third_trade_no":"245ew2","pay_time":"20230911120531",}
+```
+
+### 响应参数
+http status 返回 200， http body返回 SUCCESS
+响应示例
+
+SUCCESS
+
+代码示例
+### 3.3 二维码交易状态查询接口
+#### 接口地址
+#### URL: /qrcode/query
+#### Method：POST
+### 请求参数
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 商户支付/退款订单号 | out_trade_no | String | 64 | 是 | 象盒业务系统解冻时请求唯一流水号 |
+| 商户号 | merchant_code | String | 32 | 是 |  |
+| 商户名称 | merchant_name | String | 64 | 是 |  |
+
+请求示例
+
+```
+{"merchant_code":"226801000000865319122","out_trade_no":"ea51203e1a0146d7954b391118aecaf7","merchant_name":"xx"}
+```
+
+### 响应参数
+
+| 参数名 | 变量 | 类型 | 字段说明 |  |  |
+| --- | --- | --- | --- | --- | --- |
+| 商户订单号 | out_trade_no | String |  |  |  |
+| 商户号 | merchant_code | String | 解冻失败时返回 |  |  |
+| 商户名称 | merchant_name | String |  |  |  |
+| 新环境订单编号 | xhj_trade_no | String |  |  |  |
+| 新环境订单合同编号 | contract_no | String |  |  |  |
+| 子订单编号 | sub_order_no | String |  |  |  |
+| 金额 | amount | String |  |  |  |
+| 科目 | type | String |  |  |  |
+| 备注 | attach | String |  |  |  |
+| 银行流水号 | third_trade_no | String |  |  |  |
+| 支付/退款时间 | pay_time | String |  |  |  |
+| 交易类型 | trade_type | String |  |  |  |
+| 交易状态 | state | String | 支付/退款成功：00支付/退款中：09支付/退款失败：01部分退款：03全部退款：04 |  |  |
+| 支付类型 | pay_type | String | 支付方式  1-刷卡支付；2-工行快捷支付；3-网银支付；4-新型无卡；5-简单无卡；6-银联快捷支付；7-3D支付；8-ApplePay；9-微信；10-支付宝；11-非3D支付；12-银联扫码付；13-云闪付 |  |  |
+| 预期手续费 | pre_fee | int | 单位分 |  |  |
+
+响应示例
+
+代码示例
+### 3.4 二维码退款接口
+#### 接口地址
+#### URL: /qrcode/refund
+#### Method：POST
+### 请求参数
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 原支付订单号 | old_trade_no | String | 64 | 是 |  |
+| 商户退款订单号 | out_trade_no | String | 64 | 是 | 象盒业务系统解冻时请求唯一流水号 |
+| 商户号 | merchant_code | String | 32 | 是 |  |
+| 商户名称 | merchant_name | String | 64 | 是 |  |
+| 退款金额 | amount | String | 11 | 是 | 单位：分 |
+
+请求示例
+
+```
+{"merchant_code":"226801000000865319122","out_trade_no":"ea51203e1a0146d7954b391118aecaf7","old_trade_no":"4891123132","merchant_name":"xx","amount":"100"}
+```
+
+### 响应参数
+
+| 参数名 | 变量 | 类型 | 字段说明 |  |  |
+| --- | --- | --- | --- | --- | --- |
+| 商户订单号 | out_trade_no | String |  |  |  |
+| 商户号 | merchant_code | String | 解冻失败时返回 |  |  |
+| 商户名称 | merchant_name | String |  |  |  |
+| 新环境订单编号 | xhj_trade_no | String |  |  |  |
+| 新环境订单合同编号 | contract_no | String |  |  |  |
+| 子订单编号 | sub_order_no | String |  |  |  |
+| 金额 | amount | String |  |  |  |
+| 科目 | type | String |  |  |  |
+| 备注 | attach | String |  |  |  |
+| 银行流水号 | third_trade_no | String |  |  |  |
+| 交易类型 | trade_type | String |  |  |  |
+| 交易状态 | state | String | 支付/退款成功：00支付/退款中：09支付/退款失败：01部分退款：03全部退款：04 |  |  |
+| 退款完成时间 | refund_time | String | 格式yyyy-MM-dd mm:hh:ss |  |  |
+| 预期手续费 | pre_fee | int | 单位分 |  |  |
+
+响应示例
+
+代码示例
+
+## 4 分账接口（P0)
+### 4.1 分账申请接口
+#### 说明：象盒收支平台需对合同进行分账时，调用分账申请接口进行分账。
+#### 接口地址
+#### URL：/profit/sharing/orders
+#### Method：POST
+### 请求参数
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 分账订单号 | out_trade_no | String | 64 | 是 | 分账订单号，业务请求流水号 |
+| 合同编号 | contract_no | string | 64 | 是 | 象盒合同编号 |
+| 分账备注 | attach | string | 128 | 否 |  |
+| 分账方商户号 | merchant_code | string | 32 | 是 | 付款商户号 |
+| 分账总金额 | total_amount | int | 8 | 是 | 单位为分，本次分账总金额 |
+| 分账接收方商户 | receiver_infos | object[] |  | 是 |  |
+| 分账接收方商户号 | merchant_code | string | 32 | 是 | 收款商户号 |
+| 分账子单订单号 | sub_trade_no | string | 64 | 是 | 分账请求流水号 |
+| 分账备注 | attach | string | 128 | 是 |  |
+| 分账金额 | amount | Int | 8 | 是 | 象盒分账请求分账金额，单位为分 |
+
+请求示例
+
+```
+{    "attach": "测试001",    "contract_no": "1111111111",    "merchant_code": "226801000000865319122",    "out_trade_no": "b6df8ca277f845bb80796f4f78a614db",    "receiver_infos": [        {            "amount": 1,            "attach": "测试001",            "merchant_code": "226801000000868445122",            "sub_trade_no": "0f0fc152f209468d94bf93e0acaaaeea"        },        {            "amount": 1,            "attach": "测试001",            "merchant_code": "226801000000868445122",            "sub_trade_no": "bb42ea8ac4b3499c84bd689c5c8fb0a7"        }    ],    "total_amount": 2}
+```
+
+### 响应参数
+
+| 参数名 | 变量 | 类型 | 字段说明 |  |  |
+| --- | --- | --- | --- | --- | --- |
+| 分账订单号 | out_trade_no | string | 业务请求流水返回 |  |  |
+| 合同编号 | contract_no | string |  | 是 | 象盒合同编号 |
+| 分账方商户号 | merchant_code | string |  |  |  |
+| 失败原因编码 | failure_code | string | 错误编码，仅状态错误是返回 |  |  |
+| 失败原因描述 | failure_msg | String | 错误消息，仅状态错误是返回 |  |  |
+| 状态 | state | String | 00 表示成功01：表示失败 |  |  |
+| 分账接收方商户 | receiver_infos | object[] |  |  |  |
+| 分账接收方商户号 | merchant_code | string |  |  |  |
+| 分账子单订单号 | sub_trade_no | string | 分账业务请求流水返回 |  |  |
+| 网商流水号 | third_trade_no | Int |  |  |  |
+| 分账金额 | amount | Int | 网商处理过程可能存在分账失败，则仅返回分账成功的金额，单位为分 |  |  |
+| 手续费金额 | fee | Int | 分（V0.0.3新增字段，表示扣除的手续费金额） |  |  |
+| 分账备注 | attach | string |  |  |  |
+| 状态 | state | string |  |  |  |
+
+响应示例
+
+```
+{    "out_trade_no": "b6df8ca277f845bb80796f4f78a614db",    "contract_no": "1111111111",    "merchant_code": "226801000000865319122",    "total_amount": 2,    "attach": "测试001",    "receiver_infos": [        {            "sub_trade_no": "0f0fc152f209468d94bf93e0acaaaeea",            "third_trade_no": null,            "merchant_code": "226801000000868445122",            "amount": 1,            "attach": "测试001",            "state": "pending"        },        {            "sub_trade_no": "bb42ea8ac4b3499c84bd689c5c8fb0a7",            "third_trade_no": null,            "merchant_code": "226801000000868445122",            "amount": 1,            "attach": "测试001",            "state": "pending"        }    ]}
+```
+
+代码示例
+
+XftMybankClient client = new DefaultXftMybankClient(    "https://xhj-sit.91xft.cn", "111111111111", "xvnYAUWB00jEdIrkdrt5CtQQNB1x4Jhl");XftProfitSharingOrdersRequest request = new XftProfitSharingOrdersRequest();request.setOutTradeNo(StringUtils.getRandomStr());request.setMerchantCode("226801000000865319122");request.setContractNo("1111111111");request.setTotalAmount(2);request.setAttach("测试001");List<XftProfitSharingReceiverInfoRequest> receiverInfos = new ArrayList<>();XftProfitSharingReceiverInfoRequest receiverInfoRequest1 = new XftProfitSharingReceiverInfoRequest();receiverInfoRequest1.setMerchantCode("226801000000868445122");receiverInfoRequest1.setSubTradeNo(StringUtils.getRandomStr());receiverInfoRequest1.setAmount(1);receiverInfoRequest1.setAttach("测试001");receiverInfos.add(receiverInfoRequest1);XftProfitSharingReceiverInfoRequest receiverInfoRequest2 = new XftProfitSharingReceiverInfoRequest();receiverInfoRequest2.setMerchantCode("226801000000868445122");receiverInfoRequest2.setSubTradeNo(StringUtils.getRandomStr());receiverInfoRequest2.setAmount(1);receiverInfoRequest2.setAttach("测试001");receiverInfos.add(receiverInfoRequest2);request.setReceiverInfos(receiverInfos);XftProfitSharingOrdersResponse response = client.execute(request);
+
+### 4.2 分账结果查询接口
+#### 说明：分账后，可通过查询接口查询分账结果
+#### 接口地址
+#### URL:   /profit/sharing/detail
+#### Method：POST
+### 请求参数
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 分账订单号 | out_trade_no | String | 64 | 是 | 象盒业务系统下单时请求唯一流水号 |
+
+请求示例
+
+```
+{    "out_trade_no": "b6df8ca277f845bb80796f4f78a614db"}
+```
+
+### 响应参数
+
+| 参数名 | 变量 | 类型 | 字段说明 |
+| --- | --- | --- | --- |
+| 分账订单号 | out_trade_no | string |  |
+| 合同编号 | contract_no | string |  |
+| 分账方商户号 | merchant_code | string |  |
+| 总结金额 | total_amount | string |  |
+| 附言 | attach | String |  |
+| 分账接收方商户 | receiver_infos | object[] |  |
+| 分账接收方商户号 | merchant_code | string |  |
+| 分账子单订单号 | sub_trade_no | string |  |
+| 网商流水号 | third_trade_no | string |  |
+| 分账描述 | attach | string |  |
+| 分账金额 | amount | Int | 分 |
+| 手续费金额 | fee | Int | 分（V0.0.3新增字段，表示扣除的手续费金额） |
+| 状态 | state | string |  |
+| 失败原因 | fail_msg | string | 失败时返回 |
+
+响应示例：
+
+```
+{    "attach": "测试003",    "contract_no": "333333",    "merchant_code": "226801000000865319122",    "out_trade_no": "163a4616729d48d1bcaea60069092f32",    "receiver_infos": [        {            "amount": 1,            "attach": "测试0031",            "merchant_code": "226801000000865344977",            "state": "pending",            "sub_trade_no": "8ac60939d3e84793b4286ec56de98fd9",            "third_trade_no": "2023090310152061656165970003002571"        },        {            "amount": 1,            "attach": "测试0032",            "merchant_code": "226801000000865344977",            "state": "pending",            "sub_trade_no": "ba3240d8bc764671bdc2c26deba7e0c1",            "third_trade_no": "2023090310152061656165970003002572"        }    ],    "total_amount": 2}
+```
+
+代码示例
+
+XftMybankClient client = new DefaultXftMybankClient(    "https://xhj-sit.91xft.cn", "111111111111", "xvnYAUWB00jEdIrkdrt5CtQQNB1x4Jhl");XftProfitSharingDetailRequest request = new XftProfitSharingDetailRequest();request.setOutTradeNo("163a4616729d48d1bcaea60069092f32");XftProfitSharingDetailResponse response = client.execute(request);
+
+### 4.2 分账撤销
+#### 说明：分账成功后，可以申请分账撤销，原路退回
+#### 接口地址
+#### URL:   /profit/sharing/refund
+#### Method：POST
+### 请求参数
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 原分账申请订单号 | out_trade_no | String | 64 | 是 | 原分账申请订单号 |
+| 分账撤销申请单号 | out_refund_no | String | 64 | 是 |  |
+| 商户号 | merchant_code | String | 64 | 是 |  |
+| 备注 | attach | String | 128 | 否 |  |
+
+### 响应参数
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 原分账申请订单号 | out_trade_no | String | 64 | 是 | 原分账申请订单号 |
+| 商户号 | merchant_code | String | 64 | 是 |  |
+| 状态 | state | String | 20 | 是 | succeeded -接收成功fail -失败 |
+
+## 5 提现接口（P0)
+### 5.1 商户余额提现申请接口
+#### 说明：象盒收支平台手动对平台、门店发起提现时，需调用商户余额提现申请接口。
+#### 接口地址
+#### URL: /withdrawal/apply
+#### Method：POST
+### 请求参数
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 商户提现申请订单号 | out_trade_no | String | 64 | 是 | 象盒业务系统提现时请求唯一流水号 |
+| 商户号 | merchant_code | String | 32 | 是 | 提现商户号 |
+| 提现金额 | total_amount | Int | 11 | 是 | 象盒提现请求提现金额，单位“分” |
+| 手续费 | fee | int | 11 | 否 | 提现每笔50分 |
+| 提现备注 | attach | String | 200 | 是 |  |
+| 通知地址 | notify_url | String | 255 | 否 | 解冻成功后异步通知地址 |
+
+请求示例
+
+```
+{    "attach": "测试001",    "currency": "CNY",    "fee": 0,    "merchant_code": "226801000000865319122",    "out_trade_no": "0012b42cdbcb47d5b4b0b1e04d716f34",    "total_amount": 1}
+```
+
+### 响应参数
+
+| 参数名 | 变量 | 类型 | 字段说明 |
+| --- | --- | --- | --- |
+| 商户提现申请订单号 | out_trade_no | string |  |
+| 提现状态 | state | String | pending 表示处理中，继续调用提现确认接口fail：表示失败，重新发起提现申请 |
+| 商户号 | merchant_code | string |  |
+| 提现金额 | total_amount | Int | 象盒提现请求提现金额，单位“分” |
+| 币种 | currency | string |  |
+| 手续费 | fee | int | （V0.0.3新增字段，表示扣除的手续费金额） |
+| 提现备注 | attach | String |  |
+| 网商银行返回的订单号 | third_trade_no | String |  |
+| 失败原因 | failure_msg |  | 失败时返回 |
+
+响应示例
+
+```
+{    "out_trade_no": "0012b42cdbcb47d5b4b0b1e04d716f34",    "merchant_code": "226801000000865319122",    "total_amount": 1,    "currency": "CNY",    "fee": 0,    "attach": "测试001",    "state": "pending",    "third_trade_no": "202309120303127366",    "status": "pending"}
+```
+
+代码示例
+
+XftMybankClient client = new DefaultXftMybankClient(    "https://xhj-sit.91xft.cn", "111111111111", "xvnYAUWB00jEdIrkdrt5CtQQNB1x4Jhl");XftWithdrawalApplyRequest request = new XftWithdrawalApplyRequest();request.setOutTradeNo(StringUtils.getRandomStr());request.setMerchantCode("226801000000865319122");request.setCurrency("CNY");request.setAttach("测试001");request.setTotalAmount(1);request.setFee(0);XftWithdrawalApplyResponse response = client.execute(request);
+
+### 5.2 商户余额提现确认接口
+#### 说明：象盒收支平台手动对平台、门店发起提现，提现申请审核通过，且申请冻结余额后，需二次调用余额提现确认接口，该接口为异步接口，请求后通过提现结果查询接口查询最终状态。
+#### 接口地址
+#### URL: /withdrawal/confirm
+#### Method：POST
+
+### 请求参数
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 商户提现申请订单号 | out_trade_no | String | 64 | 是 | 必须与提现申请时的out_trade_no保持一致 |
+| 原提现申请网商流水号 | third_trade_no | String | 64 | 是 |  |
+| 商户号 | merchant_code | String | 32 | 是 |  |
+| 提现金额 | total_amount | Int | 11 | 是 | 象盒提现请求提现金额，单位“分” |
+| 手续费 | fee | int | 11 | 否 | 提现每笔0.5元 |
+| 提现备注 | attach | String | 200 | 否 |  |
+
+请求示例
+
+```
+{    "attach": "测试001",    "currency": "CNY",    "fee": 0,    "merchant_code": "226801000000865319122",    "out_trade_no": "0012b42cdbcb47d5b4b0b1e04d716f34",    "third_trade_no": "202309120303127366",    "total_amount": 1}
+```
+
+### 响应参数
+
+| 参数名 | 变量 | 类型 | 字段说明 |
+| --- | --- | --- | --- |
+| 商户提现申请订单号 | out_trade_no | string |  |
+| 提现状态 | state | String | succeeded 成功fail 失败pending 表示此处提现确认成功，最终结果通过查询接口查询 |
+| 商户号 | merchant_code | string |  |
+| 提现金额 | total_amount | Int | 象盒提现请求提现金额，单位“分” |
+| 币种 | currency | string |  |
+| 手续费 | fee | int | （V0.0.3新增字段，表示扣除的手续费金额） |
+| 提现备注 | attach | String |  |
+
+响应示例
+
+```
+{    "out_trade_no": "0012b42cdbcb47d5b4b0b1e04d716f34",    "merchant_code": "226801000000865319122",    "total_amount": 1,    "currency": "CNY",    "fee": 0,    "attach": "测试001",    "state": "succeeded"}
+```
+
+代码示例
+
+XftMybankClient client = new DefaultXftMybankClient(    "https://xhj-sit.91xft.cn", "111111111111", "xvnYAUWB00jEdIrkdrt5CtQQNB1x4Jhl");XftWithdrawalConfirmRequest request = new XftWithdrawalConfirmRequest();request.setOutTradeNo("0012b42cdbcb47d5b4b0b1e04d716f34");request.setThirdTradeNo("202309120303127366");request.setMerchantCode("");request.setCurrency("CNY");request.setAttach("测试01");request.setTotalAmount(0);request.setFee(0);XftWithdrawalConfirmResponse response = client.execute(request);
+
+### 5.3 商户余额提现查询接口
+#### 说明：发起提现确认后，可通过提现申请查询接口查询提现申请状态
+#### 接口地址
+#### URL: /withdrawal/query
+#### Method：POST
+
+### 请求参数
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 商户提现申请订单号 | out_trade_no | String | 64 | 是 | 象盒业务系统提现时请求唯一流水号 |
+| 原提现申请网商流水号 | third_trade_no | String | 64 | 是 |  |
+
+请求示例
+
+```
+{    "out_trade_no": "0012b42cdbcb47d5b4b0b1e04d716f34",    "third_trade_no": "202309120303127366"}
+```
+
+### 响应参数
+
+| 参数名 | 变量 | 类型 | 字段说明 |
+| --- | --- | --- | --- |
+| 外部交易码 | out_trade_no | string |  |
+| 原提现申请网商流水号 | third_trade_no | string |  |
+| 提现状态 | state | String | succeeded  -成功fail -失败pending -处理中 |
+| 商户号 | merchant_code | string |  |
+| 提现金额 | total_amount | Int | 象盒提现请求提现金额，单位“分” |
+| 币种 | currency | string |  |
+| 手续费 | fee | int | （V0.0.3新增字段，表示扣除的手续费金额） |
+| 提现备注 | attach | String |  |
+
+响应示例
+
+```
+{    "out_trade_no": "0012b42cdbcb47d5b4b0b1e04d716f34",    "merchant_code": "226801000000865319122",    "total_amount": 1,    "currency": "CNY",    "fee": 0,    "attach": "测试001",    "state": "succeeded",    "third_trade_no": "202309120303127366"}
+```
+
+代码示例
+
+XftMybankClient client = new DefaultXftMybankClient(    "https://xhj-sit.91xft.cn", "111111111111", "xvnYAUWB00jEdIrkdrt5CtQQNB1x4Jhl");XftWithdrawalQueryRequest request = new XftWithdrawalQueryRequest();request.setOutTradeNo("0012b42cdbcb47d5b4b0b1e04d716f34");request.setThirdTradeNo("202309120303127366");XftWithdrawalQueryResponse response = client.execute(request);
+
+### 5.4 提现成功通知接口
+#### 接口地址
+#### Method：POST
+### 请求参数
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 商户订单号 | out_trade_no | String | 64 | 是 |  |
+| 状态 | status | String | 32 | 是 | succeeded -成功fail -失败 |
+| 失败原因 | failure_msg | String | 256 | 否 | 失败时返回 |
+| 完成时间 | Finish_time | String | 20 | 否 |  |
+
+请求示例
+
+### 响应参数
+http status 返回 200， http body返回 SUCCESS
+响应示例
+
+SUCCESS
+
+代码示例
+
+## 6 电子回单接口(p0)
+接口使用说明：
+先使用电子回单申请， 每次传入的out_trade_no需要幂等。
+查询电子回单结果，查询接口会返回pdf_download_url；根据pdf_download_url去下载对应的电子回单PDF文件。下载链接的有效期为5分钟，如果下载链接过期只需要重新调用查询的接口，不需要重新调用申请
+### 6.1 电子回单申请
+#### 说明：可以下载分账交易、提现交易以及入账的电子回单，调用此接口之前需要确保相关的交易均已完成。
+#### 接口地址
+#### URL: /electronic/receipt/apply
+Mothod： POST
+### 请求参数
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 商户订单号 | out_trade_no | String | 32 | 是 | 商户订单号，需要唯一 |
+| 网商流水号 | third_trade_no | string | 64 | 是 | 网商业务流水号 |
+| 商户号 | merchant_code | string | 32 | 是 | 商户号 |
+
+请求示例
+
+```
+{    "merchant_code": "226801000000865319122",    "out_trade_no": "ea51203e1a0146d7954b39ac88aecaf7",    "third_trade_no": "202309120303127366"}
+```
+
+### 响应参数
+
+| 参数名 | 变量 | 类型 | 字段说明 |
+| --- | --- | --- | --- |
+| 商户订单号 | out_trade_no | String |  |
+| 网商流水号 | third_trade_no | string |  |
+| 商户号 | merchant_code | string |  |
+| 状态 | state | String | pending: 表示处理中 |
+| 凭证号 | receipt_no | String | 电子回单凭证号 |
+
+响应示例
+
+```
+{    "out_trade_no": "ea51203e1a0146d7954b39ac88aecaf7",    "third_trade_no": "202309120303127366",    "merchant_code": "226801000000865319122",    "receipt_no": "202309120303723529",    "state": "pending"}
+```
+
+代码示例
+
+XftMybankClient client = new DefaultXftMybankClient(    "https://xhj-sit.91xft.cn", "111111111111", "xvnYAUWB00jEdIrkdrt5CtQQNB1x4Jhl");XftElectronicReceiptApplyRequest request = new XftElectronicReceiptApplyRequest();request.setOutTradeNo(StringUtils.getRandomStr());request.setThirdTradeNo("202309120303127366");request.setMerchantCode("226801000000865319122");XftElectronicReceiptApplyResponse response = client.execute(request);
+
+### 6.2 电子回单查询
+#### 说明：可以调用此结果查询某笔电子回单申请的结果
+#### 接口地址
+#### URL: /electronic/receipt/query
+#### Method：POST
+### 请求参数
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 商户订单号 | out_trade_no | String | 32 | 是 | 商户订单号，需要唯一 |
+| 电子凭证编号 | receipt_no | string | 64 | 是 | 电子凭证编号6.1中电子凭证申请返回的编号 |
+| 商户号 | merchant_code | string | 32 | 是 | 商户号 |
+
+请求示例
+
+```
+{    "merchant_code": "226801000000865319122",    "out_trade_no": "ea51203e1a0146d7954b39ac88aecaf7",    "receipt_no": "202309120303723529"}
+```
+
+### 响应参数
+
+| 参数名 | 变量 | 类型 | 字段说明 |
+| --- | --- | --- | --- |
+| 电子凭证下载地址 | pdf_download_url | String | 电子凭证下载地址说明：有效期5分钟，过期后需要重新调用查询接口 |
+
+响应示例
+
+```
+{    "pdf_download_url": ""}
+```
+
+代码示例
+
+XftMybankClient client = new DefaultXftMybankClient(    "https://xhj-sit.91xft.cn", "111111111111", "xvnYAUWB00jEdIrkdrt5CtQQNB1x4Jhl");XftElectronicReceiptQueryRequest request = new XftElectronicReceiptQueryRequest();request.setOutTradeNo("ea51203e1a0146d7954b39ac88aecaf7");request.setReceiptNo("202309120303723529");request.setMerchantCode("226801000000865319122");XftElectronicReceiptQueryResponse response = client.execute(request);
+
+## 7 查询接口（P0）
+### 7.1 商户余额明细查询接口（P0)
+#### 说明：象盒收支平台通过商户号，查询余额明细。
+同门店交易明细查询（包含门店消费入金、分账、提现明细数据）
+#### 接口地址
+/balance/detail
+### 请求参数
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 商户号 | merchant_code | String | 32 | 否 |  |
+| 查询开始时间 | begin_date | String | 32 | 否 | yyyy-MM-dd HH:mm:ss |
+| 查询结束时间 | end_date | String | 32 | 否 | yyyy-MM-dd HH:mm:ss |
+| 页码 | page_no | int |  | 否 | 默认 1 |
+| 每页数量 | page_size | int |  | 否 | 每页数量 默认20 |
+| 收支类型 | in_out_type | String | 1 | 否 | 0：入金1：出金 |
+| 交易类型 | types | String | 1 | 否 | 变动类型1-提现，2分账、3收款、4退款、5分账手续费、6提现手续费（5、6为V0.0.3新增字段，表示分账、提现手续费变动类型） |
+| 合同编码 | contract_no | String | 32 | 否 |  |
+
+请求示例
+### 响应参数
+
+| 参数名 | 变量 | 类型 | 字段说明 |
+| --- | --- | --- | --- |
+| 总页数 | pages | int | 总页数 |
+| 当前页码 | current | int | 当前页码 |
+| 总记录条数 | total | int | 总记录条数 |
+| 当前每页条数 | size | int | 当前每页条数 |
+| 商户余额明细信息 | records | Obiect |  |
+| 商户号 | merchant_code | String | 平台分配的商户号 |
+| 余额流水号 | id | int | 商户余额明细流id |
+| 收支类型 | in_out_type | String | 0：入金1：出金 |
+| 对方商户号 | other_side_merchant_code | String | 入金，则展示付款商户号出金，则展示收款商户号 |
+| 变动金额 | amount | Int | 账户收支变动金额，单位分 |
+| 交易类型 | types | String | 变动类型1-提现，2分账、3收款、4退款5分账手续费、6提现手续费（5、6为V0.0.3新增字段，表示分账、提现手续费变动类型） |
+| 余额变动时间 | created_at | String | 余额变动记账时间yyyy-MM-dd HH:mm:ss |
+| 合同编码 | contract_no | String |  |
+| 支付流水 | trade_no | string | 支付流水号/分账流水号/提现流水号/退款流水号 |
+
+响应示例
+
+### 7.2 商户余额查询接口（P0)
+#### 说明：象盒收支平台通过商户号，查询商户余额汇总。
+#### 接口地址
+/balance/merchant
+### 请求参数
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 商户号 | merchant_code | String | 32 | 是 |  |
+
+请求示例
+
+```
+{    "merchant_code": "226801000000868445122"}
+```
+
+### 响应参数
+
+| 参数名 | 变量 | 类型 | 字段说明 |
+| --- | --- | --- | --- |
+| 商户号 | merchant_code | String | 平台分配的商户号 |
+| 币种 | currency | String | 币种，默认CNY |
+| 余额信息 | balance_info | Object |  |
+| 可提现余额 | withdraw | Int | 提现申请审核通过的金额 |
+| 冻结余额 | freeze | Int | 入金金额-提现成功金额-可提现余额 |
+| 可支付余额 | pay | Int |  |
+
+响应示例
+
+```
+{    "balance_info": {        "freeze": 0,        "pay": 0,        "withdraw": 0    },    "currency": "156",    "merchant_code": "226801000000868445122"}
+```
+
+代码示例
+
+XftMybankClient client = new DefaultXftMybankClient(    "https://xhj-sit.91xft.cn/", "111111111111", "xvnYAUWB00jEdIrkdrt5CtQQNB1x4Jhl");XftBalanceMerchantRequest request = new XftBalanceMerchantRequest();request.setMerchantCode("226801000000865319122");XftBalanceMerchantResponse response = client.execute(request);
+
+### 7.3 平台余额查询接口（P0)
+#### 说明：象盒平台银行账户当前可用余额查询。
+#### 接口地址
+/balance/platform
+### 请求参数
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 平台银行账户 | bank_acct_no | String | 32 | 是 | 网商分配的银行账号 |
+
+请求示例
+
+```
+{    "bank_acct_no": "99030220910000699002"}
+```
+
+### 响应参数
+
+| 参数名 | 变量 | 类型 | 字段说明 |
+| --- | --- | --- | --- |
+| 平台银行账户 | bank_acct_no | String | 网商分配的银行账号 |
+| 币种 | currency | String | 币种，默认CNY |
+| 余额 | amount | Int |  |
+
+响应示例
+
+```
+{    "bank_acct_no": "99030220910000699002",    "currency": "CNY",    "amount": 7900}
+```
+
+代码示例
+
+XftMybankClient client = new DefaultXftMybankClient(    "https://xhj-sit.91xft.cn/", "111111111111", "xvnYAUWB00jEdIrkdrt5CtQQNB1x4Jhl");XftBalancePlatformRequest request = new XftBalancePlatformRequest();request.setBankAcctNo("99030220910000699002");XftBalancePlatformResponse response = client.execute(request);
+
+### 7.4 合同交易汇总查询接口（支付交易汇总象盒可自己生成，无需调用接口）
+
+#### 说明：象盒收支平台通过象盒合同编码查询当前订单实际交易情况。
+#### 接口地址
+### 请求参数
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 合同编码 |  | String | 32 | 是 |  |
+
+请求示例
+### 响应参数
+
+| 参数名 | 变量 | 类型 | 字段说明 |
+| --- | --- | --- | --- |
+| 合同编码 |  | String |  |
+| 失败原因编码 | failure_code | string | 错误编码，仅状态错误是返回 |
+| 失败原因描述 | failure_msg | String | 错误消息，仅状态错误是返回 |
+| 状态 | state | String | 00 表示支付成功01：表示失败 |
+| 商户号 |  | String | 平台分配的商户号 |
+| 在途金额 |  | Int | 订单支付后：在途金额=子订单付款金额。对账后网商创单：在途金额=0； |
+| 到账金额 |  | Int | 订单支付后：到账金额=0。对账后网商创单：到账金额=子订单付款金额扣除手续费后金额；退款后：到账金额=原到账金额-退款金额+退款手续费金额；其他状态不变 |
+| 手续费 |  | Int | 订单支付后：手续费=0。对账后网商创单：手续费=实际手续费；退款后：手续费=退款后实际手续费； |
+
+响应示例
+### 7.5 门店交易汇总查询接口（支付交易汇总象盒可自己生成，无需调用接口）
+
+#### 说明：象盒收支平台通过象盒门店（商户号）查询当前订单实际交易情况。
+#### 接口地址
+### 请求参数
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 商户号 | merchant_code | String | 32 | 是 |  |
+
+请求示例
+### 响应参数
+
+| 参数名 | 变量 | 类型 | 字段说明 |
+| --- | --- | --- | --- |
+| 商户号 | merchant_code | String | 平台分配的商户号 |
+| 失败原因编码 | failure_code | string | 错误编码，仅状态错误是返回 |
+| 失败原因描述 | failure_msg | String | 错误消息，仅状态错误是返回 |
+| 状态 | state | String | 00 表示支付成功01：表示失败 |
+| 在途金额 |  | Int | 订单支付后：在途金额=子订单付款金额。对账后网商创单：在途金额=0； |
+| 到账金额 |  | Int | 订单支付后：到账金额=0。对账后网商创单：到账金额=子订单付款金额扣除手续费后金额；退款后：到账金额=原到账金额-退款金额+退款手续费金额；其他状态不变 |
+| 手续费 |  | Int | 订单支付后：手续费=0。对账后网商创单：手续费=实际手续费；退款后：手续费=退款后实际手续费； |
+
+响应示例
+### 7.6 订单流水查询
+#### 说明：查询交易订单详情列表
+#### 接口地址
+/order/outside/list
+### 请求参数
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 商户号 | merchant_code | String | 32 | 否 |  |
+| 查询开始时间 | begin_date | String | 32 | 否 | yyyy-MM-dd HH:mm:ss |
+| 查询结束时间 | end_date | String | 32 | 否 | yyyy-MM-dd HH:mm:ss |
+| 页码 | page_no | int |  | 否 | 默认 1 |
+| 每页数量 | page_size | int |  | 否 | 每页数量 默认20 |
+| 新环境订单号 | xhj_trade_no | String | 64 | 否 |  |
+| 合同编码 | contract_no | String | 32 | 否 |  |
+| 状态 | states | list | 32 | 否 | 状态列表集合支付：00-成功，01-失败，03-部分退款，04-全部退款，09-待付款，98-关闭，06-撤销退款：00-成功，01-失败，09-退款中 |
+| 订单流水号 | out_trade_no | String | 64 | 否 |  |
+| 交易类型 | trade_type | String | 32 | 否 | xft.trade.pay-支付xft.trade.refund -退款 |
+
+请求示例
+### 响应参数
+
+| 参数名 | 变量 | 类型 | 字段说明 |
+| --- | --- | --- | --- |
+| 新环境订单号 | xhj_trade_no | String |  |
+| 合同编号 | contract_no | string |  |
+| 商户号 | merchant_code | string |  |
+| 商户名称 | merchant_name | string |  |
+| 支付订单号 | out_trade_no | string |  |
+| 交易类型 | trade_type | string | xft.trade.pay-支付xft.trade.refund -退款 |
+| 第三方订单号 | third_trade_no | string |  |
+| 微信支付宝订单号 | channel_trade_no | string |  |
+| 交易完成时间 | succ_time | string | yyyy-MM-dd HH:mm:ss |
+| 子订单号 | sub_trade_no | string |  |
+| 金额 | amount | string | 单位分 |
+| 支付状态 | state | string | 支付：00-成功，01-失败，03-部分退款，04-全部退款，09-待付款，98-关闭，06-撤销退款：00-成功，01-失败，09-退款中 |
+| 实际手续费 | real_fee | string | 第二天对账完后更新 单位分 |
+| 预计手续费 | pre_fee | string | 单位分 |
+| 备注 | attach | string |  |
+| 科目 | type | string |  |
+| 创建订单时间 | created_at | string | yyyy-MM-dd HH:mm:ss |
+| 支付产品编码 | product_code | string | POS-pos订单、FIXED_CODE-聚合扫码WECHAT_SWIPING_CARD -微信刷卡支付ALIPAY_BAR_CODE -支付宝条码支付DIGITAL_SWIPING_CARD 数字钱包 |
+| 支付产品描述 | product | string | 微信刷卡支付 |
+
+响应示例
+
+## 8 申请解冻（P0)
+### 8.1 商户余额解冻申请接口
+#### 说明：申请提现前，需要先申请提现金额解冻
+#### 接口地址
+#### URL: /unfreeze/apply
+#### Method：POST
+### 请求参数
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 商户解冻申请订单号 | out_trade_no | String | 64 | 是 | 象盒业务系统解冻时请求唯一流水号 |
+| 商户号 | merchant_code | String | 32 | 是 |  |
+| 解冻金额 | total_amount | Int | 11 | 是 | 象盒解冻请求金额，单位“分” |
+| 解冻备注 | attach | String | 300 | 是 |  |
+| 通知地址 | notify_url | String | 255 | 否 | 解冻成功后异步通知地址 |
+
+请求示例
+
+### 响应参数
+
+| 参数名 | 变量 | 类型 | 字段说明 |
+| --- | --- | --- | --- |
+| 商户提现申请订单号 | out_trade_no | string |  |
+| 解冻状态 | state | String | succeeded 表示成功fail：表示失败pending 表示处理中，处理中需调用查询接口查询状态 |
+
+响应示例
+
+代码示例
+
+### 8.2 商户余额解冻申请结果接口
+#### 说明：申请解冻后，调用查询接口查询解冻状态
+#### 接口地址
+#### URL: /unfreeze/query
+#### Method：POST
+### 请求参数
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 商户解冻申请订单号 | out_trade_no | String | 64 | 是 | 象盒业务系统解冻时请求唯一流水号 |
+| 商户号 | merchant_code | String | 32 | 是 |  |
+
+请求示例
+
+```
+{"merchant_code":"226801000000865319122","out_trade_no":"ea51203e1a0146d7954b391118aecaf7"}
+```
+
+### 响应参数
+
+| 参数名 | 变量 | 类型 | 字段说明 |
+| --- | --- | --- | --- |
+| 商户解冻申请订单号 | out_trade_no | string |  |
+| 失败原因 | failure_msg | string | 解冻失败时返回 |
+| 解冻状态 | state | String | succeeded 表示成功fail：表示失败pending 表示处理中，处理中需调用查询接口查询状态 |
+
+响应示例
+
+```
+{"out_trade_no":"ea51203e1a0146d7954b391118aecaf7","state":"succeeded","failure_msg":""}
+```
+
+代码示例
+
+### 8.3 解冻成功通知接口
+#### 接口地址
+#### Method：POST
+### 请求参数
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 商户订单号 | out_trade_no | String | 64 | 是 |  |
+| 状态 | status | String | 32 | 是 | succeeded -成功fail -失败 |
+| 失败code | failure_code | String | 64 | 否 | 失败时返回 |
+| 失败原因 | failure_msg | String | 256 | 否 | 失败时返回 |
+| 完成时间 | Finish_time | String | 20 | 否 |  |
+
+请求示例
+
+```
+{"out_trade_no":"1698218591054","status":"succeeded","failure_code":"","failure_msg":"","Finish_time":"20231025152315"}
+```
+
+### 响应参数
+http status 返回 200， http body返回 SUCCESS
+响应示例
+
+SUCCESS
+
+代码示例
+
+## 8 修改结算银行卡打款认证（v0.0.4)
+### 8.1 商户修改结算银行卡打款认证申请
+#### 说明：商户修改了结算卡后，需要打款认证后才能做提现、分账等交易
+#### 接口地址
+#### URL: /verify/bankcard/apply
+#### Method：POST
+### 请求参数
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 申请订单号 | out_trade_no | String | 64 | 是 | 请求唯一流水号 |
+| 商户号 | merchant_code | String | 32 | 是 |  |
+
+### 响应参数
+
+| 参数名 | 变量 | 类型 | 字段说明 |
+| --- | --- | --- | --- |
+| 申请订单号 | out_trade_no | string |  |
+| 申请状态 | apply_status | String | succeeded 表示申请成功fail：表示失败pending 表示处理中 |
+| 验证id | verify_id | String |  |
+| 申请结果单号 | order_no | String |  |
+
+### 8.2 商户修改结算银行卡打款验证接口
+#### 说明：打款申请后，银行卡收到打款金额后，调用此接口
+#### 接口地址
+#### URL: /verify/bankcard/confirm
+#### Method：POST
+### 请求参数
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 申请订单号 | out_trade_no | String | 64 | 是 | 请求唯一流水号 |
+| 商户号 | merchant_code | String | 32 | 是 |  |
+| 验证id | verify_id | String | 64 | 是 | 申请接口返回的验证id |
+| 申请结果单号 | order_no | String | 64 | 是 | 申请接口返回的结果单号 |
+| 打款金额，单位分 | amount | String | 64 | 是 | 打款金额，单位分 |
+
+### 响应参数
+
+| 参数名 | 变量 | 类型 | 字段说明 |
+| --- | --- | --- | --- |
+| 确认状态 | status | String | succeeded 表示申请成功fail：表示失败pending 表示处理中 |
+| 异常描述 | message | String | 失败或处理中时，返回异常描述 |
+
+### 8.3 打款验证申请回执
+#### 说明：由于打款是通过⼈⾏通道，可能出现退汇的场景，即先返回打款成功的消息，后返回打款失败的消息。
+在⽹络异常或商户系统故障恢复后的情况下，可能会出现发送回执消息乱序的情况，因此不可以假设打款成
+功的消息和打款失败的消息谁先到谁后到。商户需要正确兼容处理。
+建议的处理措施是，针对相同verifyId的多笔回执消息，打款失败的消息可以覆盖打款成功的消息，但
+是打款成功的消息不能覆盖打款失败的消息。
+#### 接口地址
+#### URL: 商户提供
+#### Method：POST
+### 请求参数
+
+| 参数名 | 变量 | 类型 | 长度 | 是否必传 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| 打款状态 | status | String | 64 | 是 | SUCCESS-打款成功FAIL-打款失败REEXCHA-退汇 |
+| 商户号 | merchant_code | String | 32 | 是 |  |
+| 验证id | verify_id | String | 64 | 是 | 申请接口返回的验证id |
+| 申请结果单号 | order_no | String | 64 | 是 | 申请接口返回的结果单号 |
+
+## 9 接口调用demo
+xhj-server-demo-main.zip
+
